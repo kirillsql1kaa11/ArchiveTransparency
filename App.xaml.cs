@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Windows;
 using System.Windows.Forms;
+using ArchiveTransparency.Helpers;
 using ArchiveTransparency.Services;
 using ArchiveTransparency.Windows;
 
@@ -33,20 +34,27 @@ public partial class App : System.Windows.Application
             ContextMenuStrip = new ContextMenuStrip()
         };
 
-        // Title
         var titleItem = _trayIcon.ContextMenuStrip.Items.Add("📦 Archive Transparency");
         titleItem.Enabled = false;
         titleItem.Font = new Font(titleItem.Font, System.Drawing.FontStyle.Bold);
 
         _trayIcon.ContextMenuStrip.Items.Add(new ToolStripSeparator());
 
-        // Status
         var statusItem = _trayIcon.ContextMenuStrip.Items.Add("🟢 Активно");
         statusItem.Enabled = false;
 
         _trayIcon.ContextMenuStrip.Items.Add(new ToolStripSeparator());
 
-        // Exit
+        string autoLabel = AutoStartHelper.IsEnabled ? "✅ Автозапуск" : "⬜ Автозапуск";
+        var autoStartItem = _trayIcon.ContextMenuStrip.Items.Add(autoLabel);
+        autoStartItem.Click += (_, _) =>
+        {
+            AutoStartHelper.Toggle();
+            autoStartItem.Text = AutoStartHelper.IsEnabled ? "✅ Автозапуск" : "⬜ Автозапуск";
+        };
+
+        _trayIcon.ContextMenuStrip.Items.Add(new ToolStripSeparator());
+
         _trayIcon.ContextMenuStrip.Items.Add("❌ Выход", null, (_, _) =>
         {
             _monitor?.Stop();

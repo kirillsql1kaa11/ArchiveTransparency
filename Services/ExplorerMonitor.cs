@@ -18,7 +18,12 @@ public class ExplorerMonitor
     private bool _isProcessing;
     private CancellationTokenSource? _cts;
 
-    private static readonly string[] ArchiveExtensions = [".zip", ".rar", ".7z"];
+    private static readonly string[] ArchiveExtensions =
+    [
+        ".zip", ".rar", ".7z",
+        ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
+        ".cab", ".iso", ".wim", ".lzh", ".lzma", ".arj"
+    ];
 
     public ExplorerMonitor(TooltipWindow tooltip)
     {
