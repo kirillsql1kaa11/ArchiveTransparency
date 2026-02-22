@@ -31,14 +31,6 @@
 1. Скачайте `ArchiveTransparency.exe` из [Releases](../../releases)
 2. Запустите — программа появится в системном трее
 
-### Из исходников
-```bash
-git clone https://github.com/kirillsql1kaa11/ArchiveTransparency.git
-cd ArchiveTransparency
-dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
-```
-
-Готовый `.exe` будет в `bin/Release/net8.0-windows/win-x64/publish/`
 
 ## ⚙️ Использование
 
@@ -49,22 +41,6 @@ dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
 5. Рядом с курсором появится слывающее окно со списком файлов
 6. Уберите курсор — окно исчезнет
 
-## 🧠 Архитектура
-
-```
-ArchiveTransparency/
-├── App.xaml / App.xaml.cs          # Точка входа, трей-иконка
-├── Helpers/
-│   └── NativeMethods.cs            # Win32 API
-├── Models/
-│   └── ArchiveEntry.cs             # Модель записи архива
-├── Services/
-│   ├── ArchiveReader.cs            # Чтение через 7z CLI
-│   └── ExplorerMonitor.cs          # Мониторинг курсора (UIAutomation)
-└── Windows/
-    ├── TooltipWindow.xaml           # UI тултипа
-    └── TooltipWindow.xaml.cs        # Логика позиционирования
-```
 
 ## 👤 Автор
 
