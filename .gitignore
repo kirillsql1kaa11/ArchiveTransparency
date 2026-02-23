@@ -72,3 +72,7 @@ Thumbs.db
 # Application specific
 *.pidb
 *.user
+
+# Qwen Code AI assistant
+.qwen/
+QWEN.md
