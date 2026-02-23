@@ -1,16 +1,74 @@
-## .NET
-bin/
-obj/
-*.user
+# Visual Studio / .NET
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
 *.suo
-*.vs/
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+publish/
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+AnyCPU/
+ARM/
+ARM64/
+
+# Visual Studio 2015/2017/2019/2022 cache/options
 .vs/
+*.vspscc
+*.vssscc
 
-## Rider / VS
+# Rider
 .idea/
-*.DotSettings.user
+*.sln.iml
 
-## OS
-Thumbs.db
-Desktop.ini
+# VS Code
+.vscode/
+
+# Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+coverage*.json
+coverage*.xml
+coverage*.info
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# Publish output
+publish/
+
+# Logs
+logs/
+*.log
+
+# Configuration (keep appsettings.json.example, ignore actual config if contains secrets)
+# appsettings.json
+
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 7-Zip temporary files
+7z*.tmp
+
+# Application specific
+*.pidb
+*.user

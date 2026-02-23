@@ -3,27 +3,49 @@ using System.IO;
 using System.IO.Compression;
 using System.Text;
 using System.Text.RegularExpressions;
+using ArchiveTransparency.Config;
 using ArchiveTransparency.Models;
 using Microsoft.Win32;
+using Serilog;
+using SharpCompress.Archives;
+using SharpCompress.Common;
 
 namespace ArchiveTransparency.Services;
 
 public class ArchiveReader
 {
+    private readonly ILogger _logger;
+    private readonly Settings _settings;
+    private readonly StatisticsService _statistics;
     private readonly string? _sevenZipPath;
     private readonly Dictionary<string, (List<ArchiveEntry> Entries, DateTime CachedAt)> _cache = new();
-    private static readonly TimeSpan CacheExpiry = TimeSpan.FromMinutes(5);
-    private const int MaxEntries = 200;
+    private readonly TimeSpan _cacheExpiry;
+    private readonly int _maxEntries;
 
-    public ArchiveReader()
+    private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
+
+    public ArchiveReader(ILogger logger, Settings settings, StatisticsService statistics)
     {
-        _sevenZipPath = FindSevenZip();
+        _logger = logger;
+        _settings = settings;
+        _statistics = statistics;
+        _sevenZipPath = FindSevenZip(settings.SevenZipPath);
+        _cacheExpiry = TimeSpan.FromMinutes(settings.CacheExpirationMinutes);
+        _maxEntries = settings.MaxEntries;
+
+        _logger.Information("ArchiveReader initialized. 7-Zip path: {SevenZipPath}", _sevenZipPath ?? "null");
     }
 
     public bool IsAvailable => _sevenZipPath != null;
 
-    private static string? FindSevenZip()
+    public bool HasImagePreviewSupport => _settings.EnableImagePreview;
+
+    private static string? FindSevenZip(string? configPath)
     {
+        // Check config path first
+        if (!string.IsNullOrEmpty(configPath) && File.Exists(configPath))
+            return configPath;
+
         // Common paths
         string[] paths =
         [
@@ -44,7 +66,10 @@ public class ArchiveReader
                 if (File.Exists(full)) return full;
             }
         }
-        catch { /* ignore */ }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read 7-Zip path from registry");
+        }
 
         // PATH env
         try
@@ -56,33 +81,135 @@ public class ArchiveReader
                 if (File.Exists(full)) return full;
             }
         }
-        catch { /* ignore */ }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to find 7-Zip in PATH");
+        }
 
         return null;
     }
 
     public async Task<List<ArchiveEntry>> ReadArchiveAsync(string archivePath, CancellationToken ct)
     {
+        _logger.Debug("Reading archive: {ArchivePath}", archivePath);
+
         // Check cache
-        if (_cache.TryGetValue(archivePath, out var cached) && DateTime.Now - cached.CachedAt < CacheExpiry)
+        if (_cache.TryGetValue(archivePath, out var cached) && DateTime.Now - cached.CachedAt < _cacheExpiry)
+        {
+            _logger.Debug("Cache hit for {ArchivePath}", archivePath);
+            _statistics.RecordCacheHit();
             return cached.Entries;
+        }
 
         _cache.Remove(archivePath);
+        _statistics.RecordCacheMiss();
 
         List<ArchiveEntry>? entries = null;
 
-        // Try 7z CLI
-        if (_sevenZipPath != null)
-            entries = await ReadWith7zAsync(archivePath, ct);
+        try
+        {
+            // Check if file is accessible
+            if (!IsFileAccessible(archivePath))
+            {
+                _logger.Warning("Archive file is not accessible: {ArchivePath}", archivePath);
+                return [new ArchiveEntry { Name = "⚠️ Файл заблокирован другим процессом", IsDirectory = false }];
+            }
 
-        // Fallback for .zip
-        if (entries == null && Path.GetExtension(archivePath).Equals(".zip", StringComparison.OrdinalIgnoreCase))
-            entries = await ReadZipNativeAsync(archivePath, ct);
+            // Try SharpCompress first (supports many formats natively)
+            entries = await ReadWithSharpCompressAsync(archivePath, ct);
 
-        entries ??= [new ArchiveEntry { Name = "⚠️ 7-Zip не найден. Установите 7-Zip.", IsDirectory = false }];
+            // Try 7z CLI
+            if (entries == null && _sevenZipPath != null)
+                entries = await ReadWith7zAsync(archivePath, ct);
 
-        _cache[archivePath] = (entries, DateTime.Now);
+            // Fallback for .zip
+            if (entries == null && Path.GetExtension(archivePath).Equals(".zip", StringComparison.OrdinalIgnoreCase))
+                entries = await ReadZipNativeAsync(archivePath, ct);
+
+            entries ??= [new ArchiveEntry { Name = "⚠️ 7-Zip не найден. Установите 7-Zip.", IsDirectory = false }];
+
+            _cache[archivePath] = (entries, DateTime.Now);
+            _statistics.RecordArchiveProcessed();
+
+            _logger.Information("Read {EntryCount} entries from {ArchivePath}", entries.Count, archivePath);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.Debug("Read operation cancelled for {ArchivePath}", archivePath);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to read archive {ArchivePath}", archivePath);
+            entries = [new ArchiveEntry { Name = $"⚠️ Ошибка: {ex.Message}", IsDirectory = false }];
+        }
+
         return entries;
+    }
+
+    private static bool IsFileAccessible(string path)
+    {
+        try
+        {
+            using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<List<ArchiveEntry>?> ReadWithSharpCompressAsync(string archivePath, CancellationToken ct)
+    {
+        try
+        {
+            return await Task.Run(() =>
+            {
+                var entries = new List<ArchiveEntry>();
+
+                using var stream = File.OpenRead(archivePath);
+                using var archive = ArchiveFactory.Open(stream);
+
+                foreach (var entry in archive.Entries)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    if (entry.IsDirectory)
+                    {
+                        entries.Add(new ArchiveEntry
+                        {
+                            Name = entry.Key ?? "",
+                            Size = entry.Size,
+                            IsDirectory = true
+                        });
+                    }
+                    else if (!entry.IsDirectory)
+                    {
+                        entries.Add(new ArchiveEntry
+                        {
+                            Name = entry.Key ?? "",
+                            Size = entry.Size,
+                            IsDirectory = false
+                        });
+                    }
+
+                    if (entries.Count >= _maxEntries) break;
+                }
+
+                return entries.Count > 0 ? entries : null;
+            }, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "SharpCompress failed for {ArchivePath}", archivePath);
+            return null;
+        }
     }
 
     private async Task<List<ArchiveEntry>?> ReadWith7zAsync(string archivePath, CancellationToken ct)
@@ -106,10 +233,16 @@ public class ArchiveReader
             string output = await process.StandardOutput.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);
 
+            _logger.Debug("7z exit code: {ExitCode}", process.ExitCode);
+
             return process.ExitCode == 0 ? Parse7zOutput(output) : null;
         }
         catch (OperationCanceledException) { throw; }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "7z CLI failed for {ArchivePath}", archivePath);
+            return null;
+        }
     }
 
     private List<ArchiveEntry> Parse7zOutput(string output)
@@ -162,7 +295,7 @@ public class ArchiveReader
             }
 
             entries.Add(new ArchiveEntry { Name = name, Size = size, IsDirectory = isDir });
-            if (entries.Count >= MaxEntries) break;
+            if (entries.Count >= _maxEntries) break;
         }
 
         return entries;
@@ -185,10 +318,17 @@ public class ArchiveReader
                     Size = entry.Length,
                     IsDirectory = isDir
                 });
-                if (entries.Count >= MaxEntries) break;
+                if (entries.Count >= 200) break;
             }
 
             return entries;
         }, ct);
+    }
+
+    public bool IsImageFile(string fileName)
+    {
+        if (!_settings.EnableImagePreview) return false;
+        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+        return ImageExtensions.Contains(ext);
     }
 }

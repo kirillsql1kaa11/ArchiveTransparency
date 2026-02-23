@@ -3,20 +3,26 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
 using System.Windows.Threading;
+using ArchiveTransparency.Config;
 using ArchiveTransparency.Helpers;
 using ArchiveTransparency.Windows;
+using Serilog;
 using static ArchiveTransparency.Helpers.NativeMethods;
 
 namespace ArchiveTransparency.Services;
 
 public class ExplorerMonitor
 {
+    private readonly ILogger _logger;
+    private readonly Settings _settings;
     private readonly TooltipWindow _tooltip;
     private readonly ArchiveReader _archiveReader;
+    private readonly StatisticsService _statistics;
     private DispatcherTimer? _timer;
     private string? _lastArchivePath;
     private bool _isProcessing;
     private CancellationTokenSource? _cts;
+    private DateTime _lastTriggerTime;
 
     private static readonly string[] ArchiveExtensions =
     [
@@ -25,32 +31,52 @@ public class ExplorerMonitor
         ".cab", ".iso", ".wim", ".lzh", ".lzma", ".arj"
     ];
 
-    public ExplorerMonitor(TooltipWindow tooltip)
+    public ExplorerMonitor(
+        ILogger logger,
+        Settings settings,
+        TooltipWindow tooltip,
+        ArchiveReader archiveReader,
+        StatisticsService statistics)
     {
+        _logger = logger;
+        _settings = settings;
         _tooltip = tooltip;
-        _archiveReader = new ArchiveReader();
+        _archiveReader = archiveReader;
+        _statistics = statistics;
+        _lastTriggerTime = DateTime.MinValue;
+
+        _logger.Information("ExplorerMonitor initialized with {Interval}ms polling, {Debounce}ms debounce",
+            settings.PollingIntervalMs, settings.DebounceIntervalMs);
     }
 
     public void Start()
     {
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(_settings.PollingIntervalMs) };
         _timer.Tick += OnTimerTick;
         _timer.Start();
+        _logger.Information("ExplorerMonitor started");
     }
 
     public void Stop()
     {
         _timer?.Stop();
         _cts?.Cancel();
+        _logger.Information("ExplorerMonitor stopped");
     }
 
     private async void OnTimerTick(object? sender, EventArgs e)
     {
+        // Debouncing
+        var now = DateTime.Now;
+        if ((now - _lastTriggerTime).TotalMilliseconds < _settings.DebounceIntervalMs)
+            return;
+
         if (_isProcessing) return;
 
         try
         {
             _isProcessing = true;
+            _lastTriggerTime = now;
 
             GetCursorPos(out POINT pt);
 
@@ -83,6 +109,8 @@ public class ExplorerMonitor
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
 
+            _logger.Debug("Detected archive: {ArchivePath}", archivePath);
+
             _tooltip.ShowLoading(Path.GetFileName(archivePath), pt.X + 16, pt.Y + 16);
 
             try
@@ -91,9 +119,15 @@ public class ExplorerMonitor
                 if (!token.IsCancellationRequested)
                     _tooltip.ShowEntries(Path.GetFileName(archivePath), entries, pt.X + 16, pt.Y + 16);
             }
-            catch (OperationCanceledException) { /* expected */ }
+            catch (OperationCanceledException)
+            {
+                _logger.Debug("Read operation cancelled for {ArchivePath}", archivePath);
+            }
         }
-        catch { /* don't crash the monitor */ }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Error in ExplorerMonitor tick");
+        }
         finally
         {
             _isProcessing = false;
@@ -134,7 +168,11 @@ public class ExplorerMonitor
             using var proc = Process.GetProcessById((int)pid);
             return proc.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase);
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to check process for HWND {Hwnd}", hwnd);
+            return false;
+        }
     }
 
     private static string? GetItemNameAtPoint(POINT pt)
@@ -154,7 +192,10 @@ public class ExplorerMonitor
                 depth++;
             }
         }
-        catch { /* UIAutomation can throw */ }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "UIAutomation failed to get item name");
+        }
         return null;
     }
 
@@ -200,7 +241,10 @@ public class ExplorerMonitor
                 Marshal.ReleaseComObject(shell);
             }
         }
-        catch { /* COM failures */ }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "COM failed to get folder path");
+        }
 
         return null;
     }

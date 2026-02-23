@@ -11,11 +11,70 @@
         MaxWidth="420"
         MaxHeight="480"
         ResizeMode="NoResize"
-        Visibility="Hidden">
+        Visibility="Hidden"
+        Opacity="0">
+    <Window.Resources>
+        <!-- Fade animations -->
+        <Storyboard x:Key="FadeIn">
+            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                           From="0" To="1" Duration="0:0:0.15"/>
+        </Storyboard>
+        <Storyboard x:Key="FadeOut">
+            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                           From="1" To="0" Duration="0:0:0.15"/>
+        </Storyboard>
+        
+        <!-- TreeView style for folder grouping -->
+        <HierarchicalDataTemplate x:Key="FolderTemplate" ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal" Margin="2">
+                <TextBlock Text="📁" Margin="0,0,4,0"/>
+                <TextBlock Text="{Binding Name}" Foreground="#CDD6F4" FontSize="12"/>
+            </StackPanel>
+        </HierarchicalDataTemplate>
+        
+        <!-- File entry template -->
+        <DataTemplate x:Key="FileTemplate">
+            <Grid Margin="0,1.5">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding Icon}"
+                           FontSize="12" Margin="0,0,6,0"
+                           VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding DisplayName}"
+                           FontFamily="Segoe UI" FontSize="12"
+                           Foreground="#BAC2DE"
+                           TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center"
+                           ToolTip="{Binding DisplayPath}"/>
+                <TextBlock Grid.Column="2" Text="{Binding DisplaySize}"
+                           FontFamily="Segoe UI" FontSize="11"
+                           Foreground="#6C7086" Margin="14,0,0,0"
+                           VerticalAlignment="Center"/>
+            </Grid>
+        </DataTemplate>
+    </Window.Resources>
+    
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="Window.Loaded">
+            <BeginStoryboard Storyboard="{StaticResource FadeIn}"/>
+        </EventTrigger>
+    </Window.Triggers>
+    
     <Border CornerRadius="10" Background="#E6181825" BorderBrush="#44475A" BorderThickness="1" Padding="14">
         <Border.Effect>
             <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.55" Color="#000000"/>
         </Border.Effect>
+        <Border.ContextMenu>
+            <ContextMenu>
+                <MenuItem x:Name="MenuOpenWith7z" Header="🗂️ Открыть в 7-Zip" Click="OnOpenWith7zClick"/>
+                <MenuItem x:Name="MenuCopyPath" Header="📋 Копировать путь" Click="OnCopyPathClick"/>
+                <Separator/>
+                <MenuItem x:Name="MenuExtract" Header="📥 Извлечь..." Click="OnExtractClick"/>
+            </ContextMenu>
+        </Border.ContextMenu>
         <Grid MinWidth="200">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -41,42 +100,47 @@
                 </Border.Background>
             </Border>
 
-            <!-- File list -->
-            <ScrollViewer Grid.Row="2" MaxHeight="360"
-                          VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl x:Name="FileList">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Margin="0,1.5">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="{Binding Icon}"
-                                           FontSize="12" Margin="0,0,6,0"
-                                           VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Text="{Binding DisplayName}"
-                                           FontFamily="Segoe UI" FontSize="12"
-                                           Foreground="#BAC2DE"
-                                           TextTrimming="CharacterEllipsis"
-                                           VerticalAlignment="Center"
-                                           ToolTip="{Binding DisplayPath}"/>
-                                <TextBlock Grid.Column="2" Text="{Binding DisplaySize}"
-                                           FontFamily="Segoe UI" FontSize="11"
-                                           Foreground="#6C7086" Margin="14,0,0,0"
-                                           VerticalAlignment="Center"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
+            <!-- Content area -->
+            <Grid Grid.Row="2">
+                <!-- File list (flat view) -->
+                <ScrollViewer x:Name="FileListScroll" MaxHeight="360"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl x:Name="FileList" ItemTemplate="{StaticResource FileTemplate}"/>
+                </ScrollViewer>
+                
+                <!-- TreeView (folder grouping) -->
+                <ScrollViewer x:Name="TreeViewScroll" MaxHeight="360"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled"
+                              Visibility="Collapsed">
+                    <TreeView x:Name="FolderTree" 
+                              ItemTemplate="{StaticResource FolderTemplate}"
+                              Background="Transparent" BorderThickness="0"/>
+                </ScrollViewer>
+                
+                <!-- Image preview -->
+                <StackPanel x:Name="ImagePreviewPanel" Visibility="Collapsed" 
+                            HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Image x:Name="PreviewImage" MaxWidth="300" MaxHeight="200" 
+                           Stretch="Uniform" Margin="0,0,0,8"/>
+                    <TextBlock x:Name="PreviewText" TextAlignment="Center" 
+                               FontFamily="Segoe UI" FontSize="12"
+                               Foreground="#BAC2DE"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Progress bar for large archives -->
+            <ProgressBar x:Name="ProgressBar" Grid.Row="2"
+                         Visibility="Collapsed"
+                         IsIndeterminate="True"
+                         Height="4" Margin="0,0,0,8"
+                         VerticalAlignment="Bottom"/>
 
             <!-- Loading -->
             <StackPanel x:Name="LoadingPanel" Grid.Row="2" Visibility="Collapsed"
                         HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,12">
-                <TextBlock Text="⏳ Загрузка..."
+                <TextBlock x:Name="LoadingText" Text="⏳ Загрузка..."
                            FontFamily="Segoe UI" FontSize="12"
                            Foreground="#6C7086" HorizontalAlignment="Center"/>
             </StackPanel>
